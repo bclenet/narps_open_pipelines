@@ -18,7 +18,7 @@ from nipype.algorithms.misc import Gunzip
 
 from narps_open.pipelines import Pipeline
 
-class PipelineTeamQ60O(Pipeline):
+class PipelineTeamQ6O0(Pipeline):
     """ A class that defines the pipeline of team Q6O0. """
 
     def __init__(self):
