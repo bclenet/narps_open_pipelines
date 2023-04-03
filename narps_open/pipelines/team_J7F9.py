@@ -145,7 +145,6 @@ class PipelineTeamJ7F9(Pipeline):
         # Return contrast list
         return [trial, effect_gain, effect_loss]
 
-
     def get_parameters_file(filepaths, subject_id, working_dir):
         """
         Create new tsv files with only desired parameters per subject per run.
@@ -255,8 +254,10 @@ class PipelineTeamJ7F9(Pipeline):
             # Parameter file
             'param' : join('derivatives', 'fmriprep', 'sub-{subject_id}', 'func',
                 'sub-{subject_id}_task-MGT_run-*_bold_confounds.tsv'),
+            # Functional MRI
             'func' : join('derivatives', 'fmriprep', 'sub-{subject_id}', 'func',
                 'sub-{subject_id}_task-MGT_run-*_bold_space-MNI152NLin2009cAsym_preproc.nii.gz'),
+            # Event file
             'event' : join('sub-{subject_id}', 'func',
                 'sub-{subject_id}_task-MGT_run-*_events.tsv')
         }
