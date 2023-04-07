@@ -339,9 +339,7 @@ class PipelineTeam2T6S(Pipeline):
             (contrasts, contrast_estimate, [('contrasts', 'contrasts')]),
             (selectfiles, parameters, [('param', 'filepaths')]),
             (selectfiles, subject_infos, [('event', 'event_files')]),
-            (infosource, parameters, [
-                ('subject_id', 'subject_id'),
-                ('working_dir', 'working_dir')]),
+            (infosource, parameters, [('subject_id', 'subject_id')]),
             (selectfiles, gunzip_func, [('func', 'in_file')]),
             (gunzip_func, smooth, [('out_file', 'in_files')]),
             (smooth, specify_model, [('smoothed_files', 'functional_runs')]),
@@ -490,7 +488,9 @@ class PipelineTeam2T6S(Pipeline):
             }
 
         selectfiles_groupanalysis = Node(SelectFiles(
-            templates, base_directory=self.directories.results_dir, force_list= True),
+            templates,
+            base_directory = self.directories.results_dir,
+            force_list = True),
             name = 'selectfiles_groupanalysis')
 
         # Datasink - save important files
