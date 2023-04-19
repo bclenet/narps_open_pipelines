@@ -11,6 +11,7 @@ Usage:
     pytest -q test_resampling.py -k <selected_test>
 """
 
+from os import makedirs
 from os.path import join
 from filecmp import cmp
 
@@ -52,8 +53,10 @@ class TestResampling:
             'reference_file_05.nii.gz'
             )
 
+        makedirs(dirname(output_file_4), exist_ok = True)
         resample_image(input_file, output_file_4, 4)
         assert cmp(output_file_4, reference_file_4)
 
+        makedirs(dirname(output_file_05), exist_ok = True)
         resample_image(input_file, output_file_05, .5)
         assert cmp(output_file_05, reference_file_05)

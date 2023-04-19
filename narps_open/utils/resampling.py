@@ -37,7 +37,6 @@ def resample_image(input_file: str, output_file: str, voxel_size_multiplier: flo
             voxel_sizes[3] * voxel_size_multiplier))
     )
 
-    makedirs(dirname(output_file), exist_ok = True)
     save(resampled_image, output_file)
 
 if __name__ == '__main__':
@@ -73,13 +72,19 @@ if __name__ == '__main__':
         for run in run_list:
             for image in image_templates:
                 if '.nii' in image:
+                    output_file = join(resampled_dir, image.format(subject = subject, run = run))
+                    # Create destination if needed
+                    makedirs(dirname(output_file), exist_ok = True)
                     # Resample nifti images
                     resample_image(
                         join(dataset_dir, image.format(subject = subject, run = run)),
-                        join(resampled_dir, image.format(subject = subject, run = run)),
+                        join(output_file),
                         arguments.multiplier)
                 else:
+                    output_file = join(resampled_dir, image.format(subject = subject, run = run))
+                    # Create destination if needed
+                    makedirs(dirname(output_file), exist_ok = True)
                     # Copy other files
                     copy(
                         join(dataset_dir, image.format(subject = subject, run = run)),
-                        join(resampled_dir, image.format(subject = subject, run = run)))
+                        join(output_file)
