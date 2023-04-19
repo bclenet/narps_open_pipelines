@@ -12,7 +12,7 @@ Usage:
 """
 
 from os import makedirs
-from os.path import join
+from os.path import dirname, join
 from filecmp import cmp
 
 from pytest import mark
