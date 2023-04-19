@@ -87,4 +87,4 @@ if __name__ == '__main__':
                     # Copy other files
                     copy(
                         join(dataset_dir, image.format(subject = subject, run = run)),
-                        join(output_file)
+                        join(output_file))
