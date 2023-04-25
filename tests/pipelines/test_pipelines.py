@@ -132,7 +132,7 @@ class TestUtils:
     def test_utils():
         """ Test the utils methods of PipelineRunner """
         # 1 - Get number of not implemented pipelines
-        assert len(get_not_implemented_pipelines()) == 69
+        assert len(get_not_implemented_pipelines()) == 66
 
         # 2 - Get number of implemented pipelines
-        assert len(get_implemented_pipelines()) == 1
+        assert len(get_implemented_pipelines()) == 4

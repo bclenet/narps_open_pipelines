@@ -241,7 +241,7 @@ class PipelineTeamJ7F9(Pipeline):
         """
         # Infosource Node - To iterate on subjects
         infosource = Node(IdentityInterface(
-            fields = ['subject_id', 'exp_dir', 'result_dir', 'working_dir', 'run_list'],
+            fields = ['subject_id', 'dataset_dir', 'results_dir', 'working_dir', 'run_list'],
             dataset_dir = self.directories.dataset_dir,
             results_dir = self.directories.results_dir,
             working_dir = self.directories.working_dir,
@@ -341,7 +341,7 @@ class PipelineTeamJ7F9(Pipeline):
         l1_analysis = Workflow(base_dir = self.directories.working_dir, name = 'l1_analysis')
         l1_analysis.connect([
             (infosource, selectfiles, [('subject_id', 'subject_id')]),
-            (infosource, subject_infos, [('exp_dir', 'exp_dir'), ('run_list', 'runs')]),
+            (infosource, subject_infos, [('run_list', 'runs')]),
             (infosource, contrasts, [('subject_id', 'subject_id')]),
             (infosource, remove_gunzip_files, [('subject_id', 'subject_id')]),
             (infosource, remove_smoothed_files, [('subject_id', 'subject_id')]),

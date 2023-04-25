@@ -39,7 +39,7 @@ class TestPipelinesTeamC88N:
         assert isinstance(pipeline.get_subject_level_analysis(), Workflow)
         group_level = pipeline.get_group_level_analysis()
 
-        assert len(group_level) == 3
+        assert len(group_level) == 5
         for sub_workflow in group_level:
             assert isinstance(sub_workflow, Workflow)
 
