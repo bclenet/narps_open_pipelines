@@ -6,7 +6,6 @@
 from importlib import import_module
 from random import choices
 from argparse import ArgumentParser
-from pathlib import Path
 
 from nipype import Workflow
 
@@ -130,6 +129,39 @@ class PipelineRunner():
                     workflow.run('MultiProc', plugin_args={'n_procs': nb_procs})
                 else:
                     workflow.run()
+
+    def get_missing_outputs(self) -> list:
+        """ Return a list of missing files after computations of the pipeline """
+
+        # Get the templates of all files produced by the first level
+        templates = self._pipeline.get_preprocessing_outputs()
+        templates += self._pipeline.get_run_level_outputs()
+        templates += self._pipeline.get_subject_level_outputs()
+
+        for subject_id in get_all_participants():
+
+            missing_files = []
+            for template in templates:
+                # Identify keys in the template
+                keys = string.split('{')
+                keys = [k.split('}')[0] for k in keys if '}' in k]
+
+                if 'subject_id' in keys:
+                    template = template.format(subject_id = '*')
+
+                # Check if file exists
+                test_file = join(self.pipeline.directories.output_dir, template)
+                if not isfile(test_file):
+                    missing_files.append(test_file)
+
+            if len(missing_files) > 0:
+                self.missing[subject_id] = missing_files
+
+
+
+
+
+
 
 if __name__ == '__main__':
 

@@ -378,6 +378,35 @@ class PipelineTeamC88N(Pipeline):
 
         return l1_analysis
 
+    def get_subject_level_outputs(self):
+        """
+        Return all name templates for the files the subject level analysis is supposed to generate.
+        Names are relative from the root of the self.directories.output_dir.
+
+        Returns;
+            - a list of filenames (str)
+        """
+
+        # Handle gain
+        parameters = {
+            'file': ['con_0001.nii', 'SPM.mat', 'spmT_0001.nii']
+        }
+        parameter_sets = product(parameters.values())
+        template = join('l1_analysis_gain', '_subject_id_{subject_id}', '{file}')
+
+        return_list = [template.format(**dict(zip(parameter_keys, parameter_values))) for parameter_values in parameter_sets]
+
+        # Handle loss
+        parameters = {
+            'file': ['con_0001.nii', 'con_0002.nii', 'SPM.mat', 'spmT_0001.nii', 'spmT_0002.nii']
+        }
+        parameter_sets = product(parameters.values())
+        template = join('l1_analysis_loss', '_subject_id_{subject_id}', '{file}')
+
+        return_list += [template.format(**dict(zip(parameter_keys, parameter_values))) for parameter_values in parameter_sets]
+
+        return return_list
+
     # @staticmethod # Starting python 3.10, staticmethod should be used here
     # Otherwise it produces a TypeError: 'staticmethod' object is not callable
     def get_subset_contrasts(file_list, subject_list, participants_file):
@@ -647,3 +676,69 @@ class PipelineTeamC88N(Pipeline):
         estimate_contrast.inputs.contrasts = contrasts
 
         return l2_analysis
+
+    def get_group_level_outputs(self):
+        """
+        Return all name templates for the files the group level analysis is supposed to generate.
+        Names are relative from the root of the self.directories.output_dir.
+
+        Returns;
+            - a list of filenames (str)
+        """
+        # Handle equalRange and equalIndifference / contrast_id_0001
+        parameters = {
+            'method': ['equalRange', 'equalIndifference'],
+            'model': ['gain', 'loss'],
+            'file': [
+                'con_0001.nii', 'con_0002.nii', 'mask.nii', 'SPM.mat',
+                'spmT_0001.nii', 'spmT_0002.nii',
+                join('_threshold0', 'spmT_0001_thr.nii'), join('_threshold1', 'spmT_0002_thr.nii')
+                ]
+        }
+        parameter_sets = product(parameters.values())
+        template = join(
+            'l2_analysis_{method}_nsub_{nb_subjects}',
+            '_contrast_id_0001_model_type_{model}',
+            '{file}'
+            )
+
+        return_list = [template.format(**dict(zip(parameter_keys, parameter_values)))\
+            for parameter_values in parameter_sets]
+
+        # Handle equalRange and equalIndifference / contrast_id_0001
+        parameters = {
+            'method': ['equalRange', 'equalIndifference'],
+            'file': [
+                'con_0001.nii', 'con_0002.nii', 'mask.nii', 'SPM.mat',
+                'spmT_0001.nii', 'spmT_0002.nii',
+                join('_threshold0', 'spmT_0001_thr.nii'), join('_threshold1', 'spmT_0002_thr.nii')
+                ]
+        }
+        parameter_sets = product(parameters.values())
+        template = join(
+            'l2_analysis_{method}_nsub_{nb_subjects}',
+            '_contrast_id_0001_model_type_loss',
+            '{file}'
+            )
+
+        return_list += [template.format(**dict(zip(parameter_keys, parameter_values)))\
+            for parameter_values in parameter_sets]
+
+        # Handle groupComp
+        parameters = {
+            'file': [
+                'con_0001.nii', 'mask.nii', 'SPM.mat',
+                'spmT_0001.nii', join('_threshold0', 'spmT_0001_thr.nii')
+                ]
+        }
+        parameter_sets = product(parameters.values())
+        template = join(
+            'l2_analysis_groupComp_nsub_{nb_subjects}',
+            '_contrast_id_0001_model_type_loss',
+            '{file}'
+            )
+
+        return_list += [template.format(**dict(zip(parameter_keys, parameter_values)))\
+            for parameter_values in parameter_sets]
+
+        return return_list
