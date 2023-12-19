@@ -80,20 +80,50 @@ class PipelineTeamP5F3(Pipeline):
         data_sink = Node(DataSink(), name = 'data_sink')
         data_sink.inputs.base_directory = self.directories.output_dir
 
-        """
-        i. Structural Brain Extraction
-        ii. Motion Correction
-        iii. Spatial Smoothing
-        iv. Temporal Filtering
-        v. Intensity Normalization via grand mean scaling
-        vi. Registration to Standard Space (Resampled to standard space after running first-level GLM)
-        """
-
         # BET Node - Brain extraction for anatomical images
         brain_extraction_anat = Node(BET(), name = 'brain_extraction_anat')
         brain_extraction_anat.inputs.mask = True
         brain_extraction_anat.inputs.robust = True
         # TODO : if skull stripping was inadequate, we re-ran bet using the center of gravity parameter (’-c’), inputting the coordinates corresponding to a point just superior to the middle of the corpus callosum (anterior-posterior direction).
+
+        """
+        i. Structural Brain Extraction > OK
+
+brain_extraction : *Brain extraction on the structural (T1) images was performed using FSL’s Brain Extraction Tool (BET).
+*We used the ‘-R’ parameter to specify robust brain center estimation. The code we used was: bet T1w.nii.gz T1w_brain.nii.gz -R -m
+*If skull stripping was inadequate, we re-ran bet using the center of gravity parameter (’-c’), inputting the coordinates corresponding to a point just superior to the middle of the corpus callosum (anterior-posterior direction).
+
+segmentation : *FSL’s FAST was used to segment gray matter, white, and CSF.
+
+        ii. Motion Correction
+
+motion_correction : *FSL’s McFLIRT was used for motion correction
+*McFLIRT carries out a rigid body, 6 DOF transformation
+*A middle volume was used as the reference scan
+*The image similarity metric was normalized correlation
+*Trilinear interpolation was used.
+
+        iii. Spatial Smoothing
+
+spatial_smoothing : *FSL’s FEAT was used to perform spatial smoothing.
+*We smoothed with a 4mm Gaussian kernel (full-width-half-maximum)
+*FEAT spatially smooths via the nonlinear filtering SUSAN algorithm.
+*SUSAN is applied to each volume in the 4D timeseries’s native space).
+
+        iv. Temporal Filtering
+
+slice_time_correction : *Slice time correction via interpolation was not performed.
+Instead, we corrected for slice time effects by adding temporal derivatives of our task regressors to our first-level (within run) statistical model (GLM).
+
+        v. Intensity Normalization via grand mean scaling
+
+
+
+        vi. Registration to Standard Space (Resampled to standard space after running first-level GLM)
+
+
+
+        """
 
         # FAST Node - Segmentation of anatomical images
         segmentation_anat = Node(FAST(), name = 'segmentation_anat')
@@ -121,19 +151,26 @@ class PipelineTeamP5F3(Pipeline):
         motion_correction.inputs.interpolation = 'spline' # should be 'trilinear'
         motion_correction.inputs.save_plots = True # Save transformation parameters
 
-intra_subject_coreg : *Registration was performed using FSL’s FLIRT and FNIRT.
+intra_subject_coreg :
+*Registration was performed using FSL’s FLIRT and FNIRT.
 *Boundary Based Registration (BBR) was used to align functional to structural images, and a non-linear warp registration was used for transforming structural images to standard space
 *To the best of our understanding, these methods are surface-based.
 *Functional runs were registered to the skullstripped T1 image.
 
-inter_subject_reg : *FSL’s FLIRT and FNIRT tools were used.
+inter_subject_reg :
+*FSL’s FLIRT and FNIRT tools were used.
 *Skull-stripped/brain-extracted T1 images were used.
 *We used the MNI152_T1_2mm_brain as our template image.
-*A non-linear warp (10mm warp resolution) was used for transformation functional images into standard space. According to FSL’s documentation, a B-spline transformation is employed by FNIRT.
+*A non-linear warp (10mm warp resolution) was used for transformation functional images into standard space.
+According to FSL’s documentation, a B-spline transformation is employed by FNIRT.
 
-noise_removal : *We employed the nuisance regression method for each for noise removal by adding the ‘extended motion parameters’ from FSL’s McFLIRT to our Level 1 (within run) GLM. This means we added motion parameters (6), the first derivatives of each (6), and the squares of each (12), for a total of 24 additional motion parameters for first level (within run) model.
+noise_removal :
+*We employed the nuisance regression method for each for noise removal by adding the ‘extended motion parameters’ from FSL’s McFLIRT to our Level 1 (within run) GLM.
+This means we added motion parameters (6), the first derivatives of each (6), and the squares of each (12),
+for a total of 24 additional motion parameters for first level (within run) model.
 
-spatial_smoothing : *FSL’s FEAT was used to perform spatial smoothing.
+spatial_smoothing :
+*FSL’s FEAT was used to perform spatial smoothing.
 *We smoothed with a 4mm Gaussian kernel (full-width-half-maximum)
 *FEAT spatially smooths via the nonlinear filtering SUSAN algorithm.
 *SUSAN is applied to each volume in the 4D timeseries’s native space).
