@@ -11,9 +11,7 @@ Usage:
     pytest -q test_team_Q6O0.py -k <selected_test>
 """
 
-from statistics import mean
-
-from pytest import raises, helpers, mark
+from pytest import helpers, mark
 from nipype import Workflow
 
 from narps_open.pipelines.team_Q6O0 import PipelineTeamQ6O0
@@ -36,20 +34,35 @@ class TestPipelinesTeamQ6O0:
         assert pipeline.get_preprocessing() is None
         assert pipeline.get_run_level_analysis() is None
         assert isinstance(pipeline.get_subject_level_analysis(), Workflow)
-        group_level = pipeline.get_group_level_analysis()
 
+        group_level = pipeline.get_group_level_analysis()
         assert len(group_level) == 3
         for sub_workflow in group_level:
             assert isinstance(sub_workflow, Workflow)
 
     @staticmethod
+    @mark.unit_test
+    def test_outputs():
+        """ Test the expected outputs of a PipelineTeamQ6O0 object """
+        pipeline = PipelineTeamQ6O0()
+        # 1 - 1 subject outputs
+        pipeline.subject_list = ['001']
+        assert len(pipeline.get_preprocessing_outputs()) == 0
+        assert len(pipeline.get_run_level_outputs()) == 0
+        assert len(pipeline.get_subject_level_outputs()) == 6
+        assert len(pipeline.get_group_level_outputs()) == 37
+        assert len(pipeline.get_hypotheses_outputs()) == 18
+
+        # 2 - 4 subjects outputs
+        pipeline.subject_list = ['001', '002', '003', '004']
+        assert len(pipeline.get_preprocessing_outputs()) == 0
+        assert len(pipeline.get_run_level_outputs()) == 0
+        assert len(pipeline.get_subject_level_outputs()) == 24
+        assert len(pipeline.get_group_level_outputs()) == 37
+        assert len(pipeline.get_hypotheses_outputs()) == 18
+
+    @staticmethod
     @mark.pipeline_test
     def test_execution():
         """ Test the execution of a PipelineTeamQ6O0 and compare results """
-        results_4_subjects = helpers.test_pipeline(
-            'Q6O0',
-            '/references/',
-            '/data/',
-            '/output/',
-            4)
-        assert mean(results_4_subjects) > .003
+        helpers.test_pipeline_evaluation('Q6O0')

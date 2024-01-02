@@ -4,6 +4,7 @@
 """ Write the work of NARPS' team Q6O0 using Nipype """
 
 from os.path import join
+from itertools import product
 
 from nipype import Workflow, Node, MapNode
 from nipype.interfaces.utility import IdentityInterface, Function
@@ -25,7 +26,7 @@ class PipelineTeamQ6O0(Pipeline):
         super().__init__()
         self.fwhm = 8.0
         self.team_id = 'Q6O0'
-        self.contrast_list = ['0001', '0002', '0003', '0004']
+        self.contrast_list = ['0001']
         self.model_list = ['gain', 'loss']
 
     def get_preprocessing(self):
@@ -45,7 +46,7 @@ class PipelineTeamQ6O0(Pipeline):
         Gain and loss amounts were used as parametric regressors.
 
         Parameters :
-        - event_files : list of files containing events informations for each run
+        - event_files : list of files containing events information for each run
         - runs: list of str, list of runs to use
         - model: str, either 'gain' or 'loss'.
 
@@ -59,7 +60,6 @@ class PipelineTeamQ6O0(Pipeline):
         duration = {}
         weights_gain = {}
         weights_loss = {}
-        weights_distance = {}
 
         for run_id in range(len(runs)):  # Loop over number of runs.
             # creates dictionary items with empty lists
@@ -67,7 +67,6 @@ class PipelineTeamQ6O0(Pipeline):
             duration.update({s + '_run' + str(run_id + 1) : [] for s in condition_names})
             weights_gain.update({'gain_run' + str(run_id + 1) : []})
             weights_loss.update({'loss_run' + str(run_id + 1) : []})
-            weights_distance.update({'distance_run' + str(run_id + 1) : []})
 
         for run_id, event_file in enumerate(event_files):
             with open(event_file, 'rt') as file:
@@ -80,13 +79,10 @@ class PipelineTeamQ6O0(Pipeline):
                         val = condition + '_run' + str(run_id + 1) # trial_run1
                         val_gain = 'gain_run' + str(run_id + 1) # gain_run1
                         val_loss = 'loss_run' + str(run_id + 1) # loss_run1
-                        val_distance = 'distance_run' + str(run_id + 1)
                         onset[val].append(float(info[0])) # onsets for trial_run1
                         duration[val].append(float(4)) # durations for trial : 4
                         weights_gain[val_gain].append(float(info[2])) # weights gain for trial_run1
                         weights_loss[val_loss].append(float(info[3])) # weights loss for trial_run1
-                        weights_distance[val_distance].append(
-                            abs(0.5*(float(info[2])) - float(info[3])))
 
         # Bunching is done per run, i.e. trial_run1, trial_run2, etc.
         # But names must not have '_run1' etc because we concatenate runs
@@ -96,7 +92,6 @@ class PipelineTeamQ6O0(Pipeline):
             conditions = [c + '_run' + str(run_id + 1) for c in condition_names]
             gain = 'gain_run' + str(run_id + 1)
             loss = 'loss_run' + str(run_id + 1)
-            # distance = 'distance_run' + str(run_id + 1)
 
             if model == 'gain':
                 parametric_modulation_bunch = Bunch(
@@ -184,7 +179,7 @@ class PipelineTeamQ6O0(Pipeline):
         Return :
         - parameters_file : paths to new files containing only desired parameters.
         """
-        from os import mkdir
+        from os import makedirs
         from os.path import join, isdir
 
         import pandas as pd
@@ -213,8 +208,7 @@ class PipelineTeamQ6O0(Pipeline):
             new_path =join(working_dir, 'parameters_file',
                 f'parameters_file_sub-{subject_id}_run-{str(file_id + 1).zfill(2)}.tsv')
 
-            if not isdir(join(working_dir, 'parameters_file')):
-                mkdir(join(working_dir, 'parameters_file'))
+            makedirs(join(working_dir, 'parameters_file'), exist_ok = True)
 
             with open(new_path, 'w') as writer:
                 writer.write(retained_parameters.to_csv(
@@ -272,12 +266,7 @@ class PipelineTeamQ6O0(Pipeline):
             - l1_analysis : nipype.WorkFlow
         """
         # Infosource Node - To iterate on subjects
-        infosource = Node(IdentityInterface(
-            fields = ['subject_id', 'dataset_dir', 'results_dir', 'working_dir', 'run_list'],
-            dataset_dir = self.directories.dataset_dir,
-            results_dir = self.directories.results_dir,
-            working_dir = self.directories.working_dir,
-            run_list = self.run_list),
+        infosource = Node(IdentityInterface( fields = ['subject_id']),
             name = 'infosource')
         infosource.iterables = [('subject_id', self.subject_list)]
 
@@ -309,17 +298,19 @@ class PipelineTeamQ6O0(Pipeline):
         # Function node get_subject_infos - get subject specific condition information
         subject_infos_gain = Node(Function(
             function = self.get_subject_infos,
-            input_names = ['event_files', 'model'],
+            input_names = ['event_files', 'runs', 'model'],
             output_names=['subject_info']),
             name='subject_infos_gain')
-        subject_infos_gain.inputs.modulation = 'gain'
+        subject_infos_gain.inputs.runs = self.run_list
+        subject_infos_gain.inputs.model = 'gain'
 
         subject_infos_loss = Node(Function(
             function = self.get_subject_infos,
-            input_names = ['event_files', 'model'],
+            input_names = ['event_files', 'runs', 'model'],
             output_names = ['subject_info']),
             name='subject_infos_loss')
-        subject_infos_loss.inputs.modulation = 'loss'
+        subject_infos_loss.inputs.runs = self.run_list
+        subject_infos_loss.inputs.model = 'loss'
 
         # Function node get_parameters_file - get parameters files
         parameters = Node(Function(
@@ -363,9 +354,9 @@ class PipelineTeamQ6O0(Pipeline):
         # Function nodes get_contrasts_* - get the contrasts
         contrasts_gain = Node(Function(
             function = self.get_contrasts_gain,
-            input_names=['subject_id'],
-            output_names=['contrasts']),
-            name='contrasts_gain')
+            input_names = ['subject_id'],
+            output_names = ['contrasts']),
+            name = 'contrasts_gain')
 
         contrasts_loss = Node(Function(
             function = self.get_contrasts_loss,
@@ -375,10 +366,10 @@ class PipelineTeamQ6O0(Pipeline):
 
         # EstimateContrast - estimates contrasts
         contrast_estimate_gain = Node(EstimateContrast(),
-            name="contrast_estimate_gain")
+            name = 'contrast_estimate_gain')
 
         contrast_estimate_loss = Node(EstimateContrast(),
-            name="contrast_estimate_loss")
+            name = 'contrast_estimate_loss')
 
         # Function node remove_gunzip_files - remove output of the gunzip node
         remove_gunzip_files = Node(Function(
@@ -415,8 +406,8 @@ class PipelineTeamQ6O0(Pipeline):
             (selectfiles, gunzip_func, [('func', 'in_file')]),
             (gunzip_func, smooth, [('out_file', 'in_files')]),
             (smooth, remove_gunzip_files, [('smoothed_files', '_')]),
-            (remove_gunzip_files, specify_model_gain, [('files', 'functional_runs')]),
-            (remove_gunzip_files, specify_model_loss, [('files', 'functional_runs')]),
+            (smooth, specify_model_gain, [('smoothed_files', 'functional_runs')]),
+            (smooth, specify_model_loss, [('smoothed_files', 'functional_runs')]),
             (parameters, specify_model_gain, [('parameters_file', 'realignment_parameters')]),
             (parameters, specify_model_loss, [('parameters_file', 'realignment_parameters')]),
             (specify_model_gain, l1_design_gain, [('session_info', 'session_info')]),
@@ -444,12 +435,54 @@ class PipelineTeamQ6O0(Pipeline):
 
         return l1_analysis
 
+    def get_subject_level_outputs(self):
+        """ Return the names of the files the subject level analysis is supposed to generate. """
+
+        # Generate a list of parameter sets for further templates formatting
+        parameters = {
+            'contrast_id': self.contrast_list,
+            'model_type': self.model_list,
+            'subject_id': self.subject_list
+        }
+        # Combining all possibilities
+        # Here we use a list because the itertools.product is an iterator objects that
+        # is meant for a single-use iteration only.
+        parameter_sets = list(product(*parameters.values()))
+
+        # Contrat maps
+        contrast_map_template = join(
+            self.directories.output_dir,
+            'l1_analysis_{model_type}', '_subject_id_{subject_id}', 'con_{contrast_id}.nii'
+            )
+
+        # SPM.mat file
+        mat_file_template = join(
+            self.directories.output_dir,
+            'l1_analysis_{model_type}', '_subject_id_{subject_id}', 'SPM.mat'
+            )
+
+        # spmT maps
+        spmt_file_template = join(
+            self.directories.output_dir,
+            'l1_analysis_{model_type}', '_subject_id_{subject_id}', 'spmT_{contrast_id}.nii'
+            )
+
+        # Formatting templates and returning it as a list of files
+        output_files = [contrast_map_template.format(**dict(zip(parameters.keys(), parameter_values)))\
+            for parameter_values in parameter_sets]
+        output_files += [mat_file_template.format(**dict(zip(parameters.keys(), parameter_values)))\
+            for parameter_values in parameter_sets]
+        output_files += [spmt_file_template.format(**dict(zip(parameters.keys(), parameter_values)))\
+            for parameter_values in parameter_sets]
+
+        return output_files
+
     def get_subset_contrasts(file_list, subject_list, participants_file):
         """
         Parameters :
         - file_list : original file list selected by selectfiles node
         - subject_list : list of subject IDs that are in the wanted group for the analysis
-        - participants_file: str, file containing participants caracteristics
+        - participants_file: str, file containing participants characteristics
 
         Returns:
         - The file list containing only the files belonging to subject in the wanted group.
@@ -476,64 +509,6 @@ class PipelineTeamQ6O0(Pipeline):
                 equal_range_files.append(file)
 
         return equal_indifference_id, equal_range_id, equal_indifference_files, equal_range_files
-
-
-    def reorganize_results(team_id, nb_sub, output_dir, results_dir):
-        """
-        Reorganize the results to analyze them.
-
-        Parameters:
-            - results_dir: str, directory where results will be stored
-            - output_dir: str, name of the sub-directory for final results
-            - nb_sub: float, number of subject used for the analysis
-            - team_id: str, ID of the team to reorganize results
-
-        """
-        from os import mkdir
-        from os.path import join, isdir
-        from shutil import copyfile
-
-        hypotheses = [
-            join(output_dir, f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_gain'),
-            join(output_dir, f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_gain'),
-            join(output_dir, f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_gain'),
-            join(output_dir, f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_gain'),
-            join(output_dir, f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_loss'),
-            join(output_dir, f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_loss'),
-            join(output_dir, f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_loss'),
-            join(output_dir, f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_loss'),
-            join(output_dir, f'l2_analysis_groupComp_nsub_{nb_sub}', '_model_type_loss'),
-        ]
-
-        # Build lists of files for unthresholded and thresholded maps
-        repro_unthresh = []
-        repro_thresh = []
-        for file_id, filename in enumerate(hypotheses):
-            if file_id in [4,5]:
-                repro_unthresh.append(join(filename, 'spmT_0002.nii'))
-                repro_thresh.append(join(filename, '_threshold1', 'spmT_0002_thr.nii'))
-            else:
-                repro_unthresh.append(join(filename, 'spmT_0001.nii'))
-                repro_thresh.append(join(filename, '_threshold0', 'spmT_0001_thr.nii'))
-
-        if not isdir(join(results_dir, 'NARPS-reproduction')):
-            mkdir(join(results_dir, 'NARPS-reproduction'))
-
-        for file_id, filename in enumerate(repro_unthresh):
-            f_in = filename
-            f_out = join(results_dir,
-                'NARPS-reproduction',
-                f'team_{team_id}_nsub_{nb_sub}_hypo{file_id + 1}_unthresholded.nii')
-            copyfile(f_in, f_out)
-
-        for file_id, filename in enumerate(repro_thresh):
-            f_in = filename
-            f_out = join(results_dir,
-                'NARPS-reproduction',
-                f'team_{team_id}_nsub_{nb_sub}_hypo{file_id + 1}_thresholded.nii')
-            copyfile(f_in, f_out)
-
-        print(f'Results files of team {team_id} reorganized.')
 
     def get_group_level_analysis(self):
         """
@@ -614,16 +589,6 @@ class PipelineTeamQ6O0(Pipeline):
             force_activation = False),
             name = "threshold", iterfield = ['stat_image', 'contrast_index'])
 
-        # Function node reorganize_results - organize results once computed
-        reorganize_res = Node(Function(
-            function = self.reorganize_results,
-            input_names = ['team_id', 'nb_subjects', 'results_dir', 'output_dir']),
-            name = 'reorganize_res')
-        reorganize_res.inputs.team_id = self.team_id
-        reorganize_res.inputs.nb_subjects = nb_subjects
-        reorganize_res.inputs.results_dir = self.directories.results_dir
-        reorganize_res.inputs.output_dir = self.directories.output_dir
-
         l2_analysis = Workflow(
             base_dir = self.directories.working_dir,
             name = f'l2_analysis_{method}_nsub_{nb_subjects}')
@@ -686,3 +651,70 @@ class PipelineTeamQ6O0(Pipeline):
         estimate_contrast.inputs.contrasts = contrasts
 
         return l2_analysis
+
+    def get_group_level_outputs(self):
+        """ Return all names for the files the group level analysis is supposed to generate. """
+
+        # Handle equalRange and equalIndifference
+        parameters = {
+            'model_type': self.model_list,
+            'method': ['equalRange', 'equalIndifference'],
+            'file': [
+                'con_0001.nii', 'con_0002.nii', 'mask.nii', 'SPM.mat',
+                'spmT_0001.nii', 'spmT_0002.nii',
+                join('_threshold0', 'spmT_0001_thr.nii'), join('_threshold1', 'spmT_0002_thr.nii')
+                ],
+            'nb_subjects': [str(len(self.subject_list))]
+        }
+        parameter_sets = product(*parameters.values())
+        template = join(
+            self.directories.output_dir,
+            'l2_analysis_{method}_nsub_{nb_subjects}',
+            '_model_type_{model_type}',
+            '{file}'
+            )
+
+        return_list = [template.format(**dict(zip(parameters.keys(), parameter_values)))\
+            for parameter_values in parameter_sets]
+
+        # Handle groupComp
+        parameters = {
+            'model_type': ['loss'],
+            'method': ['groupComp'],
+            'file': [
+                'con_0001.nii', 'mask.nii', 'SPM.mat', 'spmT_0001.nii',
+                join('_threshold0', 'spmT_0001_thr.nii')
+                ],
+            'nb_subjects' : [str(len(self.subject_list))]
+        }
+        parameter_sets = product(*parameters.values())
+
+        return_list += [template.format(**dict(zip(parameters.keys(), parameter_values)))\
+            for parameter_values in parameter_sets]
+
+        return return_list
+
+    def get_hypotheses_outputs(self):
+        """ Return all hypotheses output file names. """
+        nb_sub = len(self.subject_list)
+        files = [
+            join(f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_gain', '_threshold0', 'spmT_0001_thr.nii'),
+            join(f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_gain', 'spmT_0001.nii'),
+            join(f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_gain', '_threshold0', 'spmT_0001_thr.nii'),
+            join(f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_gain', 'spmT_0001.nii'),
+            join(f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_gain', '_threshold0', 'spmT_0001_thr.nii'),
+            join(f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_gain', 'spmT_0001.nii'),
+            join(f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_gain', '_threshold0', 'spmT_0001_thr.nii'),
+            join(f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_gain', 'spmT_0001.nii'),
+            join(f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_loss', '_threshold1', 'spmT_0002_thr.nii'),
+            join(f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_loss', 'spmT_0002.nii'),
+            join(f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_loss', '_threshold1', 'spmT_0002_thr.nii'),
+            join(f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_loss', 'spmT_0002.nii'),
+            join(f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_loss', '_threshold0', 'spmT_0001_thr.nii'),
+            join(f'l2_analysis_equalIndifference_nsub_{nb_sub}', '_model_type_loss', 'spmT_0001.nii'),
+            join(f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_loss', '_threshold0', 'spmT_0001_thr.nii'),
+            join(f'l2_analysis_equalRange_nsub_{nb_sub}', '_model_type_loss', 'spmT_0001.nii'),
+            join(f'l2_analysis_groupComp_nsub_{nb_sub}', '_model_type_loss', '_threshold0', 'spmT_0001_thr.nii'),
+            join(f'l2_analysis_groupComp_nsub_{nb_sub}', '_model_type_loss', 'spmT_0001.nii')
+        ]
+        return [join(self.directories.output_dir, f) for f in files]

@@ -3,6 +3,7 @@
 
 """ This module allows to run pipelines from NARPS open. """
 
+from os.path import isfile
 from importlib import import_module
 from random import choices
 from argparse import ArgumentParser
@@ -10,7 +11,11 @@ from argparse import ArgumentParser
 from nipype import Workflow
 
 from narps_open.pipelines import Pipeline, implemented_pipelines
-from narps_open.utils import get_all_participants, get_participants
+from narps_open.data.participants import (
+    get_all_participants,
+    get_participants,
+    get_participants_subset
+    )
 from narps_open.utils.configuration import Configuration
 
 class PipelineRunner():
@@ -52,6 +57,12 @@ class PipelineRunner():
         # Generate a random list of subjects
         self._pipeline.subject_list = choices(get_participants(self.team_id), k = value)
 
+    @subjects.setter
+    def nb_subjects(self, value: int) -> None:
+        """ Setter for property nb_subjects """
+        # Get a subset of participants
+        self._pipeline.subject_list = get_participants_subset(value)
+
     @property
     def team_id(self) -> str:
         """ Getter for property team_id """
@@ -69,7 +80,7 @@ class PipelineRunner():
         if implemented_pipelines[self._team_id] is None:
             raise NotImplementedError(f'Pipeline not implemented for team : {self.team_id}')
 
-        # Instanciate the pipeline
+        # Instantiate the pipeline
         class_type = getattr(
             import_module('narps_open.pipelines.team_'+self._team_id),
             implemented_pipelines[self._team_id])
@@ -89,26 +100,23 @@ class PipelineRunner():
 
         if first_level_only and group_level_only:
             raise AttributeError('first_level_only and group_level_only cannot both be True')
-        if first_level_only:
-            workflow_list = [
+
+        # Generate workflow list
+        workflow_list = []
+        if not group_level_only:
+            workflow_list += [
                 self._pipeline.get_preprocessing(),
                 self._pipeline.get_run_level_analysis(),
                 self._pipeline.get_subject_level_analysis(),
             ]
-        elif group_level_only:
-            workflow_list = [
-                self._pipeline.get_group_level_analysis()
-            ]
-        else:
-            workflow_list = [
-                self._pipeline.get_preprocessing(),
-                self._pipeline.get_run_level_analysis(),
-                self._pipeline.get_subject_level_analysis(),
+        if not first_level_only:
+            workflow_list += [
                 self._pipeline.get_group_level_analysis()
             ]
 
         nb_procs = Configuration()['runner']['nb_procs']
 
+        # Launch workflows
         for workflow in workflow_list:
             if workflow is None:
                 pass
@@ -130,38 +138,19 @@ class PipelineRunner():
                 else:
                     workflow.run()
 
-    def get_missing_outputs(self) -> list:
-        """ Return a list of missing files after computations of the pipeline """
+    def get_missing_first_level_outputs(self):
+        """ Return the list of missing files after computations of the first level """
+        files = self._pipeline.get_preprocessing_outputs()
+        files += self._pipeline.get_run_level_outputs()
+        files += self._pipeline.get_subject_level_outputs()
 
-        # Get the templates of all files produced by the first level
-        templates = self._pipeline.get_preprocessing_outputs()
-        templates += self._pipeline.get_run_level_outputs()
-        templates += self._pipeline.get_subject_level_outputs()
+        return [f for f in files if not isfile(f)]
 
-        for subject_id in get_all_participants():
+    def get_missing_group_level_outputs(self):
+        """ Return the list of missing files after computations of the group level """
+        files = self._pipeline.get_group_level_outputs()
 
-            missing_files = []
-            for template in templates:
-                # Identify keys in the template
-                keys = string.split('{')
-                keys = [k.split('}')[0] for k in keys if '}' in k]
-
-                if 'subject_id' in keys:
-                    template = template.format(subject_id = '*')
-
-                # Check if file exists
-                test_file = join(self.pipeline.directories.output_dir, template)
-                if not isfile(test_file):
-                    missing_files.append(test_file)
-
-            if len(missing_files) > 0:
-                self.missing[subject_id] = missing_files
-
-
-
-
-
-
+        return [f for f in files if not isfile(f)]
 
 if __name__ == '__main__':
 
@@ -170,15 +159,19 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--team', type=str, required=True,
         help='the team ID')
     subjects = parser.add_mutually_exclusive_group(required=True)
-    subjects.add_argument('-r', '--random', type=str,
-        help='the number of subjects to be randomly selected')
     subjects.add_argument('-s', '--subjects', nargs='+', type=str, action='extend',
-        help='a list of subjects')
+        help='a list of subjects to be selected')
+    subjects.add_argument('-n', '--nsubjects', type=str,
+        help='the number of subjects to be selected')
+    subjects.add_argument('-r', '--rsubjects', type=str,
+        help='the number of subjects to be selected randomly')
     levels = parser.add_mutually_exclusive_group(required=False)
     levels.add_argument('-g', '--group', action='store_true', default=False,
         help='run the group level only')
     levels.add_argument('-f', '--first', action='store_true', default=False,
         help='run the first levels only (preprocessing + subjects + runs)')
+    parser.add_argument('-c', '--check', action='store_true', required=False,
+        help='check pipeline outputs (runner is not launched)')
     arguments = parser.parse_args()
 
     # Initialize a PipelineRunner
@@ -191,8 +184,21 @@ if __name__ == '__main__':
     # Handle subject
     if arguments.subjects is not None:
         runner.subjects = arguments.subjects
+    elif arguments.rsubjects is not None:
+        runner.random_nb_subjects = int(arguments.rsubjects)
     else:
-        runner.random_nb_subjects = int(arguments.random)
+        runner.nb_subjects = int(arguments.nsubjects)
 
-    # Handle levels and start the runner
-    runner.start(arguments.first, arguments.group)
+    # Check data
+    if arguments.check:
+        missing_files = []
+        print('Missing files for team', arguments.team, 'after running',
+            len(runner.pipeline.subject_list), 'subjects:')
+        if not arguments.group:
+            print('First level:', runner.get_missing_first_level_outputs())
+        if not arguments.first:
+            print('Group level:', runner.get_missing_group_level_outputs())
+
+    # Start the runner
+    else:
+        runner.start(arguments.first, arguments.group)
