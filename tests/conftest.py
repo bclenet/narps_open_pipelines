@@ -120,17 +120,14 @@ def test_pipeline_execution(
     runner.nb_subjects = nb_subjects
     runner.start(False, True)
 
-    # Indices and keys to the unthresholded maps
-    indices = list(range(1, 18, 2))
-
-    # Retrieve the paths to the reproduced files
+    # Retrieve the paths to the reproduced files (unthresholded maps only)
     reproduced_files = runner.pipeline.get_hypotheses_outputs()
-    reproduced_files = [reproduced_files[i] for i in indices]
+    reproduced_files = [reproduced_files[i] for i in list(range(1, 18, 2))]
 
     # Retrieve the paths to the results files
     collection = ResultsCollection(team_id)
-    results_files = [join(collection.directory, f) for f in sorted(collection.files.keys())]
-    results_files = [results_files[i] for i in indices]
+    file_keys = [f'hypo{h}_unthresh.nii.gz' for h in range(1,10)]
+    results_files = [join(collection.directory, k) for k in file_keys]
 
     # Compute the correlation coefficients
     return [
