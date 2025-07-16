@@ -10,19 +10,21 @@ from nipype import Workflow, Node, MapNode
 from nipype.algorithms.modelgen import SpecifyModel
 from nipype.interfaces.utility import IdentityInterface, Function, Split, Merge
 from nipype.interfaces.io import SelectFiles, DataSink
-from nipype.interfaces.fsl.maths import ImageMaths, ImageStats, MultiImageMaths
+from nipype.interfaces.fsl.maths import MultiImageMaths
 from nipype.interfaces.fsl.preprocess import SUSAN
 from nipype.interfaces.fsl.model import (
     Level1Design, FEATModel, L2Model, FLAMEO, FILMGLS, MultipleRegressDesign,
     FSLCommand, Cluster
     )
-from nipype.interfaces.fsl.utils import Merge as FSLMerge
+from nipype.interfaces.fsl.utils import ImageMaths, ImageStats, Merge as FSLMerge
 
 from narps_open.utils.configuration import Configuration
 from narps_open.pipelines import Pipeline
 from narps_open.data.task import TaskInformation
 from narps_open.data.participants import get_group
-from narps_open.core.common import list_intersection, elements_in_string, clean_list
+from narps_open.core.common import (
+    remove_parent_directory, list_intersection, elements_in_string, clean_list
+    )
 from narps_open.core.interfaces import InterfaceFactory
 
 # Setup FSL
@@ -94,12 +96,12 @@ class PipelineTeamO21U(Pipeline):
         # ImageStats - Compute the median value of each time point
         # (only because it's needed by SUSAN)
         median_value = Node(ImageStats(), name = 'median_value')
-        median_value.op_string='-k %s -p 50'
+        median_value.inputs.op_string = '-k %s -p 50'
         preprocessing.connect(select_files, 'func', median_value, 'in_file')
         preprocessing.connect(select_files, 'mask', median_value, 'mask_file')
 
         # Merge - Merge the median values with the mean functional images into a coupled list
-        merge_median = Node(Merge(2, axis='hstack'), name = 'merge_median')
+        merge_median = Node(Merge(2), name = 'merge_median')
         preprocessing.connect(mean_func, 'out_file', merge_median, 'in1')
         preprocessing.connect(median_value, 'out_stat', merge_median, 'in2')
 
@@ -111,13 +113,13 @@ class PipelineTeamO21U(Pipeline):
         get_brightness_threshold = lambda median : 0.75 * median
 
         # Define a function to get the usans for SUSAN
-        get_usans = lambda value : [tuple([val[0], 0.75 * val[1]])]
+        get_usans = lambda value : [tuple([value[0], 0.75 * value[1]])]
 
         preprocessing.connect(mask_func, 'out_file', smooth_func, 'in_file')
         preprocessing.connect(
             median_value, ('out_stat', get_brightness_threshold),
             smooth_func, 'brightness_threshold')
-        preprocessing.connect(merge_median, ('out', getusans), smooth_func, 'usans')
+        preprocessing.connect(merge_median, ('out', get_usans), smooth_func, 'usans')
 
         # TODO : Mask the smoothed data ?
         """
@@ -135,7 +137,7 @@ class PipelineTeamO21U(Pipeline):
         # ImageMaths - Scale each time point so that its median value is 10000
         normalize_intensity = Node(ImageMaths(), name = 'normalize_intensity')
         normalize_intensity.inputs.suffix = '_intnorm'
-        preprocessing.connect(smooth_func, 'out_file', normalize_intensity, 'in_file')
+        preprocessing.connect(smooth_func, 'smoothed_file', normalize_intensity, 'in_file')
         preprocessing.connect(
             median_value, ('out_stat', get_intensity_normalization_scale),
             normalize_intensity, 'op_string')
@@ -152,12 +154,13 @@ class PipelineTeamO21U(Pipeline):
         if Configuration()['pipelines']['remove_unused_data']:
 
             # Merge Node - Merge func file names to be removed after datasink node is performed
-            merge_removable_files = Node(Merge(4), name = 'merge_removable_files')
+            merge_removable_files = Node(Merge(5), name = 'merge_removable_files')
             merge_removable_files.inputs.ravel_inputs = True
             preprocessing.connect(func_to_float, 'out_file', merge_removable_files, 'in1')
             preprocessing.connect(mask_func, 'out_file', merge_removable_files, 'in2')
             preprocessing.connect(mean_func, 'out_file', merge_removable_files, 'in3')
-            preprocessing.connect(smooth_func, 'out_file', merge_removable_files, 'in4')
+            preprocessing.connect(smooth_func, 'smoothed_file', merge_removable_files, 'in4')
+            preprocessing.connect(normalize_intensity, 'out_file', merge_removable_files, 'in5')
 
             # Function Nodes remove_files - Remove sizeable func files once they aren't needed
             remove_dirs = MapNode(Function(
@@ -181,8 +184,8 @@ class PipelineTeamO21U(Pipeline):
         parameter_sets = product(*parameters.values())
         template = join(
             self.directories.output_dir, 'preprocessing',
-            '_subject_id_{subject_id}', '_run_id_{run_id}',
-            'wc2sub-{subject_id}_T1w.nii')
+            '_run_id_{run_id}_subject_id_{subject_id}',
+            'sub-{subject_id}_task-MGT_run-{run_id}_bold_space-MNI152NLin2009cAsym_preproc_dtype_thresh_smooth_intnorm.nii.gz')
 
         return [template.format(**dict(zip(parameters.keys(), parameter_values)))\
             for parameter_values in parameter_sets]
