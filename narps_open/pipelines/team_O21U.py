@@ -7,15 +7,16 @@ from os.path import join
 from itertools import product
 
 from nipype import Workflow, Node, MapNode
-from nipype.interfaces.utility import IdentityInterface, Function, Split
+from nipype.algorithms.modelgen import SpecifyModel
+from nipype.interfaces.utility import IdentityInterface, Function, Split, Merge
 from nipype.interfaces.io import SelectFiles, DataSink
-from nipype.interfaces.fsl import (
-    IsotropicSmooth, Level1Design, FEATModel,
-    L2Model, Merge, FLAMEO, FILMGLS, MultipleRegressDesign,
+from nipype.interfaces.fsl.maths import ImageMaths, ImageStats, MultiImageMaths
+from nipype.interfaces.fsl.preprocess import SUSAN
+from nipype.interfaces.fsl.model import (
+    Level1Design, FEATModel, L2Model, FLAMEO, FILMGLS, MultipleRegressDesign,
     FSLCommand, Cluster
     )
-from nipype.algorithms.modelgen import SpecifyModel
-from nipype.interfaces.fsl.maths import MultiImageMaths
+from nipype.interfaces.fsl.utils import Merge as FSLMerge
 
 from narps_open.utils.configuration import Configuration
 from narps_open.pipelines import Pipeline
@@ -41,8 +42,150 @@ class PipelineTeamO21U(Pipeline):
             ]
 
     def get_preprocessing(self):
-        """ No preprocessing has been done by team O21U """
-        return None
+        """ Create the preprocessing workflow """
+
+        # Initiate the workflow
+        preprocessing = Workflow(
+            base_dir = self.directories.working_dir,
+            name = 'preprocessing'
+            )
+
+        # IdentityInterface Node - Iterate on subject and runs
+        information_source = Node(IdentityInterface(
+            fields = ['subject_id', 'run_id']),
+            name = 'information_source')
+        information_source.iterables = [
+            ('subject_id', self.subject_list),
+            ('run_id', self.run_list)
+            ]
+
+        # SelectFiles - Get necessary files
+        templates = {
+            'func' : join('derivatives', 'fmriprep', 'sub-{subject_id}', 'func',
+                'sub-{subject_id}_task-MGT_run-{run_id}_bold_space-MNI152NLin2009cAsym_preproc.nii.gz'),
+            'mask' : join('derivatives', 'fmriprep', 'sub-{subject_id}', 'func',
+                'sub-{subject_id}_task-MGT_run-{run_id}_bold_space-MNI152NLin2009cAsym_brainmask.nii.gz')
+        }
+        select_files = Node(SelectFiles(templates), name = 'select_files')
+        select_files.inputs.base_directory = self.directories.dataset_dir
+        preprocessing.connect(information_source, 'subject_id', select_files, 'subject_id')
+        preprocessing.connect(information_source, 'run_id', select_files, 'run_id')
+
+        # ImageMaths - Convert func to float representation
+        func_to_float = Node(ImageMaths(), name = 'func_to_float')
+        func_to_float.inputs.out_data_type = 'float'
+        func_to_float.inputs.op_string = ''
+        func_to_float.inputs.suffix = '_dtype'
+        preprocessing.connect(select_files, 'func', func_to_float, 'in_file')
+
+        # ImageMaths - Mask the functional image
+        mask_func = Node(ImageMaths(), name = 'mask_func')
+        mask_func.inputs.suffix = '_thresh'
+        mask_func.inputs.op_string = '-mas'
+        preprocessing.connect(func_to_float, 'out_file', mask_func, 'in_file')
+        preprocessing.connect(select_files, 'mask', mask_func, 'in_file2')
+
+        # ImageMaths - Compute the mean image of each time point
+        mean_func = Node(ImageMaths(), name = 'mean_func')
+        mean_func.inputs.suffix = '_mean'
+        mean_func.inputs.op_string = '-Tmean'
+        preprocessing.connect(mask_func, 'out_file', mean_func, 'in_file')
+
+        # ImageStats - Compute the median value of each time point
+        # (only because it's needed by SUSAN)
+        median_value = Node(ImageStats(), name = 'median_value')
+        median_value.op_string='-k %s -p 50'
+        preprocessing.connect(select_files, 'func', median_value, 'in_file')
+        preprocessing.connect(select_files, 'mask', median_value, 'mask_file')
+
+        # Merge - Merge the median values with the mean functional images into a coupled list
+        merge_median = Node(Merge(2, axis='hstack'), name = 'merge_median')
+        preprocessing.connect(mean_func, 'out_file', merge_median, 'in1')
+        preprocessing.connect(median_value, 'out_stat', merge_median, 'in2')
+
+        # SUSAN - Smoothing funk
+        smooth_func = Node(SUSAN(), name = 'smooth_func')
+        smooth_func.inputs.fwhm = 4.9996179300001655 # see Chen et. al. 2022
+
+        # Define a function to get the brightness threshold for SUSAN
+        get_brightness_threshold = lambda median : 0.75 * median
+
+        # Define a function to get the usans for SUSAN
+        get_usans = lambda value : [tuple([val[0], 0.75 * val[1]])]
+
+        preprocessing.connect(mask_func, 'out_file', smooth_func, 'in_file')
+        preprocessing.connect(
+            median_value, ('out_stat', get_brightness_threshold),
+            smooth_func, 'brightness_threshold')
+        preprocessing.connect(merge_median, ('out', getusans), smooth_func, 'usans')
+
+        # TODO : Mask the smoothed data ?
+        """
+        maskfunc3 = pe.MapNode(
+            interface=fsl.ImageMaths(op_string='-mas'),
+            name='maskfunc3',
+            iterfield=['in_file','in_file2'])
+        wf.connect(smooth, 'smoothed_file', maskfunc3, 'in_file')
+        wf.connect(dilatemask, 'out_file', maskfunc3, 'in_file2')
+        """
+
+        # Define a function to get the scaling factor for intensity normalization
+        get_intensity_normalization_scale = lambda median : '-mul %.10f' % (10000. / median)
+
+        # ImageMaths - Scale each time point so that its median value is 10000
+        normalize_intensity = Node(ImageMaths(), name = 'normalize_intensity')
+        normalize_intensity.inputs.suffix = '_intnorm'
+        preprocessing.connect(smooth_func, 'out_file', normalize_intensity, 'in_file')
+        preprocessing.connect(
+            median_value, ('out_stat', get_intensity_normalization_scale),
+            normalize_intensity, 'op_string')
+
+        # TODO : temporal filtering ???
+
+        # DataSink Node - store the wanted results in the wanted repository
+        data_sink = Node(DataSink(), name = 'data_sink')
+        data_sink.inputs.base_directory = self.directories.output_dir
+        preprocessing.connect(
+            normalize_intensity, 'out_file', data_sink, 'preprocessing.@normalized_file')
+
+        # Remove large files, if requested
+        if Configuration()['pipelines']['remove_unused_data']:
+
+            # Merge Node - Merge func file names to be removed after datasink node is performed
+            merge_removable_files = Node(Merge(4), name = 'merge_removable_files')
+            merge_removable_files.inputs.ravel_inputs = True
+            preprocessing.connect(func_to_float, 'out_file', merge_removable_files, 'in1')
+            preprocessing.connect(mask_func, 'out_file', merge_removable_files, 'in2')
+            preprocessing.connect(mean_func, 'out_file', merge_removable_files, 'in3')
+            preprocessing.connect(smooth_func, 'out_file', merge_removable_files, 'in4')
+
+            # Function Nodes remove_files - Remove sizeable func files once they aren't needed
+            remove_dirs = MapNode(Function(
+                function = remove_parent_directory,
+                input_names = ['_', 'file_name'],
+                output_names = []
+                ), name = 'remove_dirs', iterfield = 'file_name')
+            preprocessing.connect(merge_removable_files, 'out', remove_dirs, 'file_name')
+            preprocessing.connect(data_sink, 'out_file', remove_dirs, '_')
+
+        return preprocessing
+
+    def get_preprocessing_outputs(self):
+        """ Return the names of the files the preprocessing is supposed to generate. """
+
+        # Outputs from preprocessing (intensity normalized files)
+        parameters = {
+            'subject_id': self.subject_list,
+            'run_id': self.run_list,
+        }
+        parameter_sets = product(*parameters.values())
+        template = join(
+            self.directories.output_dir, 'preprocessing',
+            '_subject_id_{subject_id}', '_run_id_{run_id}',
+            'wc2sub-{subject_id}_T1w.nii')
+
+        return [template.format(**dict(zip(parameters.keys(), parameter_values)))\
+            for parameter_values in parameter_sets]
 
     def get_subject_information(event_file):
         """
@@ -121,7 +264,7 @@ class PipelineTeamO21U(Pipeline):
         Returns:
             - run_level : nipype.WorkFlow
         """
-        # Create run level analysis workflow and connect its nodes
+        # Create run level analysis workflow
         run_level = Workflow(
             base_dir = self.directories.working_dir,
             name = 'run_level_analysis'
