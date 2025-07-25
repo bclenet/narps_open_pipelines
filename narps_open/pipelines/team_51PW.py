@@ -8,17 +8,17 @@ from itertools import product
 
 from nipype import Node, Workflow, MapNode
 from nipype.interfaces.utility import IdentityInterface, Function, Split
-from nipype.interfaces.io import SelectFiles, DataSink
+from nipype.interfaces.io import SelectFiles, DataSink, DataGrabber
 from nipype.interfaces.fsl import (
     # General usage
-    FSLCommand, ImageStats,
+    FSLCommand, ImageStats, ImageMaths
     # Preprocessing
     SUSAN,
     # Analyses
     Level1Design, FEATModel, L2Model, FILMGLS,
     FLAMEO, Randomise, MultipleRegressDesign
     )
-from nipype.interfaces.fsl.utils import ExtractROI, Merge as MergeImages
+from nipype.interfaces.fsl.utils import ExtractROI, Merge as FSLMerge
 from nipype.interfaces.fsl.maths import MathsCommand, MultiImageMaths
 from nipype.algorithms.modelgen import SpecifyModel
 
@@ -53,6 +53,10 @@ class PipelineTeam51PW(Pipeline):
         Returns:
             - preprocessing : nipype.WorkFlow
         """
+        # Define workflow
+        preprocessing = Workflow(base_dir = self.directories.working_dir, name = 'preprocessing')
+        preprocessing.config['execution']['stop_on_first_crash'] = 'true'
+
         # IdentityInterface node - allows to iterate over subjects and runs
         information_source = Node(IdentityInterface(
             fields = ['subject_id', 'run_id']),
@@ -75,10 +79,22 @@ class PipelineTeam51PW(Pipeline):
         }
         select_files = Node(SelectFiles(templates), name = 'select_files')
         select_files.inputs.base_directory = self.directories.dataset_dir
+        preprocessing.connect(information_source, 'subject_id', select_files, 'subject_id')
+        preprocessing.connect(information_source, 'run_id', select_files, 'run_id')
 
-        # DataSink Node - store the wanted results in the wanted directory
-        data_sink = Node(DataSink(), name = 'data_sink')
-        data_sink.inputs.base_directory = self.directories.output_dir
+        # ImageMaths - Convert func to float representation
+        func_to_float = Node(ImageMaths(), name = 'func_to_float')
+        func_to_float.inputs.out_data_type = 'float'
+        func_to_float.inputs.op_string = ''
+        func_to_float.inputs.suffix = '_dtype'
+        preprocessing.connect(select_files, 'func', func_to_float, 'in_file')
+
+        # ImageMaths - Mask the functional image
+        mask_func = Node(ImageMaths(), name = 'mask_func')
+        mask_func.inputs.suffix = '_thresh'
+        mask_func.inputs.op_string = '-mas'
+        preprocessing.connect(func_to_float, 'out_file', mask_func, 'in_file')
+        preprocessing.connect(select_files, 'mask', mask_func, 'in_file2')
 
         # ImageStats Node - Compute mean value of the 4D data
         #   -k option adds a mask
@@ -88,10 +104,14 @@ class PipelineTeam51PW(Pipeline):
         #       (i.e.: apply mask then compute stat)
         compute_mean = Node(ImageStats(), name = 'compute_mean')
         compute_mean.inputs.op_string = '-k %s -m'
+        preprocessing.connect(mask_func, 'out_file', compute_mean, 'in_file')
 
         # MathsCommand Node - Perform grand-mean intensity normalisation of the entire 4D data
-        intensity_normalization = Node(MathsCommand(), name = 'intensity_normalization')
-        build_ing_args = lambda x : f'-ing {x}'
+        intensity_normalization = Node(ImageMaths(), name = 'intensity_normalization')
+        build_ing_args = lambda val : '-mul %.10f' % (10000. / val)
+        preprocessing.connect(mask_func, 'out_file', intensity_normalization, 'in_file')
+        preprocessing.connect(
+            compute_mean, ('out_stat', build_ing_args),  intensity_normalization, 'args')
 
         # ImageStats Node - Compute median of voxel values to derive SUSAN's brightness_threshold
         #   -k option adds a mask
@@ -101,34 +121,22 @@ class PipelineTeam51PW(Pipeline):
         #       (i.e.: apply mask then compute stat)
         compute_median = Node(ImageStats(), name = 'compute_median')
         compute_median.inputs.op_string = '-k %s -p 50'
+        preprocessing.connect(mask_func, 'out_file', compute_median, 'in_file')
 
         # SUSAN Node - smoothing of functional images
         #   we set brightness_threshold to .75x median of the input file, as performed by fMRIprep
         smoothing = Node(SUSAN(), name = 'smoothing')
         smoothing.inputs.fwhm = self.fwhm
         compute_brightness_threshold = lambda x : .75 * x
+        preprocessing.connect(
+            compute_median, ('out_stat', compute_brightness_threshold),
+            smoothing, 'brightness_threshold')
+        preprocessing.connect(intensity_normalization, 'out_file', smoothing, 'in_file')
 
-        # Define workflow
-        preprocessing = Workflow(base_dir = self.directories.working_dir, name = 'preprocessing')
-        preprocessing.config['execution']['stop_on_first_crash'] = 'true'
-        preprocessing.connect([
-            (information_source, select_files, [
-                ('subject_id', 'subject_id'), ('run_id', 'run_id')
-                ]),
-            (select_files, compute_mean, [('func', 'in_file')]),
-            (select_files, compute_mean, [('mask', 'mask_file')]),
-            (select_files, intensity_normalization, [('func', 'in_file')]),
-            (select_files, compute_median, [('func', 'in_file')]),
-            (select_files, compute_median, [('mask', 'mask_file')]),
-            (compute_mean, intensity_normalization, [
-                (('out_stat', build_ing_args), 'args')
-                ]),
-            (compute_median, smoothing, [
-                (('out_stat', compute_brightness_threshold), 'brightness_threshold')
-                ]),
-            (intensity_normalization, smoothing, [('out_file', 'in_file')]),
-            (smoothing, data_sink, [('smoothed_file', 'preprocessing.@output_image')])
-            ])
+        # DataSink Node - store the wanted results in the wanted directory
+        data_sink = Node(DataSink(), name = 'data_sink')
+        data_sink.inputs.base_directory = self.directories.output_dir
+        preprocessing.connect(smoothing, 'smoothed_file', data_sink, 'preprocessing.@output_image')
 
         # Remove large files, if requested
         if Configuration()['pipelines']['remove_unused_data']:
@@ -467,11 +475,11 @@ class PipelineTeam51PW(Pipeline):
         generate_model.inputs.num_copes = len(self.run_list)
 
         # Merge Node - Merge copes files for each subject
-        merge_copes = Node(MergeImages(), name = 'merge_copes')
+        merge_copes = Node(FSLMerge(), name = 'merge_copes')
         merge_copes.inputs.dimension = 't'
 
         # Merge Node - Merge varcopes files for each subject
-        merge_varcopes = Node(MergeImages(), name = 'merge_varcopes')
+        merge_varcopes = Node(FSLMerge(), name = 'merge_varcopes')
         merge_varcopes.inputs.dimension = 't'
 
         # Split Node - Split mask list to serve them as inputs of the MultiImageMaths node.
@@ -665,11 +673,11 @@ class PipelineTeam51PW(Pipeline):
         )
 
         # Merge Node - Merge cope files
-        merge_copes = Node(MergeImages(), name = 'merge_copes')
+        merge_copes = Node(FSLMerge(), name = 'merge_copes')
         merge_copes.inputs.dimension = 't'
 
         # Merge Node - Merge cope files
-        merge_varcopes = Node(MergeImages(), name = 'merge_varcopes')
+        merge_varcopes = Node(FSLMerge(), name = 'merge_varcopes')
         merge_varcopes.inputs.dimension = 't'
 
         # Split Node - Split mask list to serve them as inputs of the MultiImageMaths node.
