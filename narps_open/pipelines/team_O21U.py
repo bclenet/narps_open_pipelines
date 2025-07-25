@@ -641,17 +641,25 @@ class PipelineTeamO21U(Pipeline):
         # Compute the number of participants used to do the analysis
         nb_subjects = len(self.subject_list)
 
-        # Create subject lists
+        # Create subject lists & convert subject ids to EVs ids used at subject_level
         equal_range_subjects = [s for s in get_group('equalRange') if s in self.subject_list]
+        equal_range_evs = [self.subject_list.index(s)+1 for s in equal_range_subjects]
         equal_indifference_subjects = [
             s for s in get_group('equalIndifference') if s in self.subject_list]
+        equal_indifference_evs = [
+            self.subject_list.index(s)+1 for s in equal_indifference_subjects]
+
         selected_subjects = []
+        selected_evs = []
         if method == 'equalRange':
             selected_subjects = equal_range_subjects
+            selected_evs = equal_range_evs
         elif method == 'equalIndifference':
             selected_subjects = equal_indifference_subjects
+            selected_evs = equal_indifference_evs
         else:
             selected_subjects = equal_range_subjects + equal_indifference_subjects
+            selected_evs = equal_range_evs + equal_indifference_evs
 
         # Declare the workflow
         group_level = Workflow(
@@ -677,8 +685,8 @@ class PipelineTeamO21U(Pipeline):
             'varcopes': join('_contrast_id_%s', 'varcope%s.nii.gz')
             }
         select_copes.inputs.template_args = {
-            'copes': [['contrast_id', s] for s in range(1, 1+len(selected_subjects))],
-            'varcopes': [['contrast_id', s] for s in range(1, 1+len(selected_subjects))]
+            'copes': [['contrast_id', s] for s in selected_evs],
+            'varcopes': [['contrast_id', s] for s in selected_evs]
             }
         select_copes.inputs.sort_filelist = False
         group_level.connect(information_source, 'contrast_id', select_copes, 'contrast_id')
