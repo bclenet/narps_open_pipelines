@@ -17,15 +17,31 @@ from pathvalidate import is_valid_filepath
 from numpy import isclose
 
 from narps_open.pipelines import Pipeline
-from narps_open.runner import PipelineRunner
+from narps_open.runner import PipelineRunner, PipelineRunnerLevel
 from narps_open.utils import get_subject_id
 from narps_open.utils.correlation import get_correlation_coefficient
 from narps_open.utils.configuration import Configuration
 from narps_open.data.results import ResultsCollection
 from narps_open.data.participants import get_participants_subset
 
-# Init configuration, to ensure it is in testing mode
-Configuration(config_type='testing')
+def pytest_addoption(parser):
+    """ Add a configuration option for narps_open to the pytest command line """
+    parser.addoption('--narps_open_config',
+        action='store', help='NARPS Open Pipelines configuration file')
+
+@fixture(scope='session', autouse=True)
+def load_configuration(request):
+    """ Automatically load narps_open configuration from the corresponding
+        pytest command line argument.
+    """
+    config_file = request.config.getoption('--narps_open_config')
+
+    if config_file:
+        # Init configuration with custom file
+        Configuration(config_type='custom').config_file = config_file
+    else:
+        # Ensure it is in testing mode
+        Configuration(config_type='testing')
 
 @fixture
 def temporary_data_dir():
@@ -113,7 +129,7 @@ def test_pipeline_execution(
 
             # Get missing subjects
             missing_subjects = set()
-            for file in runner.get_missing_first_level_outputs():
+            for file in runner.get_missing_outputs(PipelineRunnerLevel.FIRST):
                 subject_id = get_subject_id(file)
                 if subject_id is not None:
                     missing_subjects.add(subject_id)
@@ -125,19 +141,19 @@ def test_pipeline_execution(
             # Start pipeline
             runner.subjects = missing_subjects
             try: # This avoids errors in the workflow to make the test fail
-                runner.start(True, False)
+                runner.start(PipelineRunnerLevel.FIRST)
             except(RuntimeError) as err:
                 print('RuntimeError: ', err)
 
     # Check missing files for the last time
-    missing_files = runner.get_missing_first_level_outputs()
+    missing_files = runner.get_missing_outputs(PipelineRunnerLevel.FIRST)
     if missing_files:
         print('Missing files:', missing_files)
         raise Exception('There are missing files for first level analysis.')
 
     # Start pipeline for the group level only
     runner.nb_subjects = nb_subjects
-    runner.start(False, True)
+    runner.start(PipelineRunnerLevel.SECOND)
 
     # Indices and keys to the unthresholded maps
     indices = list(range(1, 18, 2))
