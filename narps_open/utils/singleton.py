@@ -19,8 +19,14 @@ class SingletonMeta(type):
 
     def __call__(cls, *args, **kwargs):
         """ Creating only one instance for the class 'cls' """
+
+        # Return only instance of class cls if the instance was already created
+        if cls in cls._instances:
+            return cls._instances[cls]
+
+        # Else, create the instance with thread safe mechanism
         with cls._lock:
-            if cls not in cls._instances:
-                instance = super().__call__(*args, **kwargs)
-                cls._instances[cls] = instance
-        return cls._instances[cls]
+            instance = super().__call__(*args, **kwargs)
+            cls._instances[cls] = instance
+
+            return cls._instances[cls]

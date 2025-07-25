@@ -9,7 +9,7 @@ from itertools import product
 from nipype import Workflow, Node, MapNode
 from nipype.algorithms.modelgen import SpecifyModel
 from nipype.interfaces.utility import IdentityInterface, Function, Split, Merge
-from nipype.interfaces.io import SelectFiles, DataSink
+from nipype.interfaces.io import SelectFiles, DataSink, DataGrabber
 from nipype.interfaces.fsl.aroma import ICA_AROMA
 from nipype.interfaces.fsl.preprocess import SUSAN, BET
 from nipype.interfaces.fsl.model import (
@@ -180,22 +180,25 @@ class PipelineTeamT54A(Pipeline):
         mean_func_2.inputs.op_string = '-Tmean'
         preprocessing.connect(normalize_intensity, 'out_file', mean_func_2, 'in_file')
 
-        # ImageMaths - Perform temporal highpass filtering on the data
-        def get_high_pass_filter_command(in_file):
+        # Function get_high_pass_filter_command - Build command line for temporal highpass filter
+        def get_high_pass_filter_command(in_file, repetition_time, high_pass_filter_cutoff):
             """ Create command line for high pass filtering using image maths """
-            from narps_open import TaskInformation
-
-            high_pass_filter_cutoff = 100 #seconds
-            repetition_time = float(TaskInformation()['RepetitionTime'])
-
             return f'-bptf {high_pass_filter_cutoff / (2.0 * repetition_time)} -1 -add {in_file}'
 
+        high_pass_command = Node(Function(
+            function = get_high_pass_filter_command,
+            input_names = ['in_file', 'repetition_time', 'high_pass_filter_cutoff'],
+            output_names = ['command']
+            ), name = 'high_pass_command')
+        high_pass_command.inputs.high_pass_filter_cutoff = 100.0 #seconds
+        high_pass_command.inputs.repetition_time = TaskInformation()['RepetitionTime']
+        preprocessing.connect(mean_func_2, 'out_file', high_pass_command, 'in_file')
+
+        # ImageMaths - Perform temporal highpass filtering on the data
         high_pass_filter = Node(ImageMaths(), name = 'high_pass_filter')
         high_pass_filter.inputs.suffix = '_tempfilt'
         preprocessing.connect(normalize_intensity, 'out_file', high_pass_filter, 'in_file')
-        preprocessing.connect(
-            mean_func_2, ('out_file', get_high_pass_filter_command),
-            high_pass_filter, 'op_string')
+        preprocessing.connect(high_pass_command, 'command', high_pass_filter, 'op_string')
 
         # DataSink Node - store the wanted results in the wanted repository
         data_sink = Node(DataSink(), name = 'data_sink')
@@ -240,7 +243,7 @@ class PipelineTeamT54A(Pipeline):
         template = join(
             self.directories.output_dir, 'preprocessing',
             '_run_id_{run_id}_subject_id_{subject_id}',
-            'sub-{subject_id}_task-MGT_run-{run_id}_bold_space-MNI152NLin2009cAsym_preproc_dtype_thresh_smooth_intnorm.nii.gz')
+            'denoised_func_data_nonaggr_brain_smooth_intnorm_tempfilt.nii.gz')
 
         return [template.format(**dict(zip(parameters.keys(), parameter_values)))\
             for parameter_values in parameter_sets]
@@ -329,7 +332,7 @@ class PipelineTeamT54A(Pipeline):
         from pandas import read_csv, DataFrame
         from numpy import array, transpose
 
-        data_frame = read_csv(filepath, sep = '\t', header=0)
+        data_frame = read_csv(in_file, sep = '\t', header=0)
         if 'NonSteadyStateOutlier00' in data_frame.columns:
             temp_list = array([
                 data_frame['X'], data_frame['Y'], data_frame['Z'],
@@ -379,7 +382,7 @@ class PipelineTeamT54A(Pipeline):
             # Preprocessed functional MRI
             'func' : join(self.directories.output_dir, 'preprocessing',
                 '_run_id_{run_id}_subject_id_{subject_id}',
-                'sub-{subject_id}_task-MGT_run-{run_id}_bold_space-MNI152NLin2009cAsym_preproc_dtype_thresh_smooth_intnorm.nii.gz'
+                'denoised_func_data_nonaggr_brain_smooth_intnorm_tempfilt.nii.gz'
             ),
             # Event file
             'events' : join('sub-{subject_id}', 'func',
@@ -429,14 +432,14 @@ class PipelineTeamT54A(Pipeline):
         # FEATModel Node - Generate run level model
         model_generation = Node(FEATModel(), name = 'model_generation')
         run_level_analysis.connect(model_design, 'ev_files',  model_generation, 'ev_files')
-        run_level_analysis.connect(model_design, 'fsf_files',  model_generation, 'fsf_files')
+        run_level_analysis.connect(model_design, 'fsf_files',  model_generation, 'fsf_file')
 
         # FILMGLS Node - Estimate first level model
         model_estimate = Node(FILMGLS(), name = 'model_estimate')
         model_estimate.inputs.smooth_autocorr = True
         model_estimate.inputs.mask_size = 5
         model_estimate.inputs.threshold = 1000
-        run_level_analysis.connect(smoothing_func, 'out_file', model_estimate, 'in_file')
+        run_level_analysis.connect(select_files, 'func', model_estimate, 'in_file')
         run_level_analysis.connect(model_generation, 'con_file', model_estimate, 'tcon_file')
         run_level_analysis.connect(model_generation, 'design_file', model_estimate, 'design_file')
 
@@ -500,6 +503,12 @@ class PipelineTeamT54A(Pipeline):
         Returns:
         - subject_level_analysis : nipype.WorkFlow
         """
+        # Create run level analysis workflow and connect its nodes
+        subject_level = Workflow(
+            base_dir = self.directories.working_dir,
+            name = 'subject_level_analysis'
+            )
+
         # Infosource Node - To iterate on subject and runs
         information_source = Node(IdentityInterface(
             fields = ['subject_id', 'contrast_id']),
@@ -612,28 +621,33 @@ class PipelineTeamT54A(Pipeline):
         subject_level.connect(
             estimate_model, 'var_copes', data_sink, 'subject_level_analysis.@varcopes')
 
-        return subject_level_analysis
+        return subject_level
 
     def get_subject_level_outputs(self):
         """ Return the names of the files the subject level analysis is supposed to generate. """
 
+        # Copes, varcopes, stats
         parameters = {
             'contrast_id' : self.contrast_list,
-            'subject_id' : self.subject_list,
+            'subject_ev' : range(1, 1+len(self.subject_list))
         }
         parameter_sets = product(*parameters.values())
-        output_dir = join(self.directories.output_dir, 'subject_level_analysis',
-            '_contrast_id_{contrast_id}_subject_id_{subject_id}')            
+        output_dir = join(self.directories.output_dir, 'subject_level_analysis')
         templates = [
-            join(output_dir, 'cope1.nii.gz'),
-            join(output_dir, 'tstat1.nii.gz'),
-            join(output_dir, 'varcope1.nii.gz'),
-            join(output_dir, 'zstat1.nii.gz'),
-            join(output_dir, 'sub-{subject_id}_task-MGT_run-01_bold_space-MNI152NLin2009cAsym_preproc_brain_mask_maths.nii.gz')
+            join(output_dir, '_contrast_id_{contrast_id}', 'cope{subject_ev}.nii.gz'),
+            join(output_dir, '_contrast_id_{contrast_id}', 'tstat{subject_ev}.nii.gz'),
+            join(output_dir, '_contrast_id_{contrast_id}', 'varcope{subject_ev}.nii.gz'),
+            join(output_dir, '_contrast_id_{contrast_id}', 'zstat{subject_ev}.nii.gz')
             ]
-
-        return [template.format(**dict(zip(parameters.keys(), parameter_values)))\
+        return_list = [template.format(**dict(zip(parameters.keys(), parameter_values)))\
             for parameter_values in parameter_sets for template in templates]
+
+        # Mask
+        return_list.append(join(output_dir,
+            f'sub-{self.subject_list[0]}_task-MGT_run-{self.run_list[0]}_bold_space-MNI152NLin2009cAsym_brainmask_merged_maths.nii.gz'
+            ))
+
+        return return_list
 
     def get_one_sample_t_test_regressors(subject_list: list) -> dict:
         """

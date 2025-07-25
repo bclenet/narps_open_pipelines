@@ -17,11 +17,12 @@ class TaskInformation(dict, metaclass=SingletonMeta):
 
         # Load information from the task-MGT_bold.json file
         if task_file:
-            task_information_file = task_file # For testing purpose only
-        else:            
-            task_information_file = join(
+            self.task_information_file = task_file # For testing purpose only
+        else:
+            self.task_information_file = join(
                 Configuration()['directories']['dataset'], 'task-MGT_bold.json')
-        with open(task_information_file, 'rb') as file:
+
+        with open(self.task_information_file, 'rb') as file:
             self.update(load(file))
 
         # Compute derived information
