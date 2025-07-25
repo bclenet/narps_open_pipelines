@@ -138,25 +138,49 @@ class PipelineTeamO21U(Pipeline):
             median_value, ('out_stat', get_intensity_normalization_scale),
             normalize_intensity, 'op_string')
 
-        # TODO : temporal filtering ???
+        # ImageMaths - Generate a mean functional image from the scaled data
+        mean_func_2 = Node(ImageMaths(), name = 'mean_func_2')
+        mean_func_2.inputs.op_string = '-Tmean'
+        preprocessing.connect(normalize_intensity, 'out_file', mean_func_2, 'in_file')
+
+        # Function get_high_pass_filter_command - Build command line for temporal highpass filter
+        def get_high_pass_filter_command(in_file, repetition_time, high_pass_filter_cutoff):
+            """ Create command line for high pass filtering using image maths """
+            return f'-bptf {high_pass_filter_cutoff / (2.0 * repetition_time)} -1 -add {in_file}'
+
+        high_pass_command = Node(Function(
+            function = get_high_pass_filter_command,
+            input_names = ['in_file', 'repetition_time', 'high_pass_filter_cutoff'],
+            output_names = ['command']
+            ), name = 'high_pass_command')
+        high_pass_command.inputs.high_pass_filter_cutoff = 100.0 #seconds
+        high_pass_command.inputs.repetition_time = TaskInformation()['RepetitionTime']
+        preprocessing.connect(mean_func_2, 'out_file', high_pass_command, 'in_file')
+
+        # ImageMaths - Perform temporal highpass filtering on the data
+        high_pass_filter = Node(ImageMaths(), name = 'high_pass_filter')
+        high_pass_filter.inputs.suffix = '_tempfilt'
+        preprocessing.connect(normalize_intensity, 'out_file', high_pass_filter, 'in_file')
+        preprocessing.connect(high_pass_command, 'command', high_pass_filter, 'op_string')
 
         # DataSink Node - store the wanted results in the wanted repository
         data_sink = Node(DataSink(), name = 'data_sink')
         data_sink.inputs.base_directory = self.directories.output_dir
         preprocessing.connect(
-            normalize_intensity, 'out_file', data_sink, 'preprocessing.@normalized_file')
+            high_pass_filter, 'out_file', data_sink, 'preprocessing.@filtered_file')
 
         # Remove large files, if requested
         if Configuration()['pipelines']['remove_unused_data']:
 
             # Merge Node - Merge func file names to be removed after datasink node is performed
-            merge_removable_files = Node(Merge(5), name = 'merge_removable_files')
+            merge_removable_files = Node(Merge(6), name = 'merge_removable_files')
             merge_removable_files.inputs.ravel_inputs = True
             preprocessing.connect(func_to_float, 'out_file', merge_removable_files, 'in1')
             preprocessing.connect(mask_func, 'out_file', merge_removable_files, 'in2')
             preprocessing.connect(mean_func, 'out_file', merge_removable_files, 'in3')
             preprocessing.connect(smooth_func, 'smoothed_file', merge_removable_files, 'in4')
             preprocessing.connect(normalize_intensity, 'out_file', merge_removable_files, 'in5')
+            preprocessing.connect(high_pass_filter, 'out_file', merge_removable_files, 'in6')
 
             # Function Nodes remove_files - Remove sizeable func files once they aren't needed
             remove_dirs = MapNode(Function(
@@ -181,7 +205,7 @@ class PipelineTeamO21U(Pipeline):
         template = join(
             self.directories.output_dir, 'preprocessing',
             '_run_id_{run_id}_subject_id_{subject_id}',
-            'sub-{subject_id}_task-MGT_run-{run_id}_bold_space-MNI152NLin2009cAsym_preproc_dtype_thresh_smooth_intnorm.nii.gz')
+            'sub-{subject_id}_task-MGT_run-{run_id}_bold_space-MNI152NLin2009cAsym_preproc_dtype_thresh_smooth_intnorm_tempfilt.nii.gz')
 
         return [template.format(**dict(zip(parameters.keys(), parameter_values)))\
             for parameter_values in parameter_sets]
@@ -286,7 +310,7 @@ class PipelineTeamO21U(Pipeline):
         templates = {
             'func' : join(self.directories.output_dir,
                 'preprocessing', '_run_id_{run_id}_subject_id_{subject_id}',
-                'sub-{subject_id}_task-MGT_run-{run_id}_bold_space-MNI152NLin2009cAsym_preproc_dtype_thresh_smooth_intnorm.nii.gz'),
+                'sub-{subject_id}_task-MGT_run-{run_id}_bold_space-MNI152NLin2009cAsym_preproc_dtype_thresh_smooth_intnorm_tempfilt.nii.gz'),
             'mask' : join('derivatives', 'fmriprep', 'sub-{subject_id}', 'func',
                 'sub-{subject_id}_task-MGT_run-{run_id}_bold_space-MNI152NLin2009cAsym_brainmask.nii.gz'),
             'events' : join('sub-{subject_id}', 'func',
