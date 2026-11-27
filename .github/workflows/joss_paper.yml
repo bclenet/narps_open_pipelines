@@ -1,0 +1,25 @@
+name: Export Joss paper as PDF
+on:
+  push:
+    branches: [joss]
+  pull_request:
+    branches: [joss]
+
+jobs:
+  paper:
+    runs-on: ubuntu-latest
+    name: Paper Draft
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Build draft PDF
+        uses: openjournals/openjournals-draft-action@master
+        with:
+          journal: joss
+          paper-path: paper/paper.md
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: paper
+          path: paper/paper.pdf
+          archive: false
