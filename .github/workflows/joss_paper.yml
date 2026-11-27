@@ -1,4 +1,4 @@
-name: Export Joss paper as PDF
+name: joss_paper
 on:
   push:
     branches: [joss]
